@@ -6,7 +6,7 @@
 #define MAX_URL_LENGTH 8192
 #define EBUFLEN 128
 
-const char pattern[] = "<a\\s[^>]*?href\\s*=\\s*([\"']?[^\"'\\s>]*)[^>]*>";
+const char pattern[] = "<a\\s[^>]*?href\\s*=\\s*[\"']?([^\"'\\s>]*)[^>]*>";
 
 int isContainHost(char *url)
 {
@@ -50,6 +50,11 @@ int substr(char *des, const char*str, unsigned start, unsigned end)
 {
 	unsigned n;
 	unsigned i=start;
+	char exam[100];
+
+	strncpy(exam,str+start,end-start);
+	exam[end-start]=0;
+	printf("exam: %s\n",exam);
 	
 	if ((str[start]=='"' && str[end]=='"') )
 	{
@@ -92,8 +97,8 @@ int parseUrl(char* content, char* host)
 	while (offset < contentlen && (rc = pcre_exec(re,0,content,contentlen,offset,0,ovector,sizeof(ovector))) == 2)
 	{
 		substr(url,content,ovector[2],ovector[3]);	//get the url
-		printf("one may be url:%s\n",url);
-		urllen = strlen(url);			//because url is just the only var,so malloc new
+		//printf("one may be url:%s\n",url);
+		urllen = strlen(url); //because url is just the only var,so malloc new
 		if (isContainHost(url) == 0)
 		{
 			temp = (char*)malloc( urllen + hostlen + 1);
@@ -115,6 +120,7 @@ int parseUrl(char* content, char* host)
 			{
 				printf("add new url:%s into the set\n",temp);
 				listAddNodeTail(queue, temp);	//add to the tail,always.lock
+				//printList(queue);
 				freeReplyObject(reply);
 				reply = redisCommand(context,"sadd %s %s",setName,temp);
 				freeReplyObject(reply);
@@ -126,7 +132,11 @@ int parseUrl(char* content, char* host)
 				freeReplyObject(reply);
 			}
 			else
+			{
+				free(temp);
+				freeReplyObject(reply);
 				printf("some error occurs!\n");
+			}
 
 			pthread_mutex_unlock(&queue_mutex);
 		}

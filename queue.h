@@ -91,6 +91,7 @@ void printList(list *list)
 
 	current = list->head;
 	len = list->len;
+	printf("the queue contains %d nodes:\n",len);
 	while ( len--)
 	{
 		printf("%s\n",current->value);

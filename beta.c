@@ -48,8 +48,8 @@ static void disconnectRedis(redisContext *c) {
     /* Make sure we're on DB 9. */
     reply = redisCommand(c,"SELECT 9");
     freeReplyObject(reply);
-    reply = redisCommand(c,"FLUSHDB");
-    freeReplyObject(reply);
+    //reply = redisCommand(c,"FLUSHDB"); //flushdb myself
+    //freeReplyObject(reply);
 
     /* Free the context as well. */
     redisFree(c);
@@ -74,7 +74,7 @@ int main(int argc, char **argv)
 	nconn = 0;
 	
 	while (nlefttoconn > 0 || nconn > 0) {
-		printf("lefttoconn: %d, conn:%d\n",nlefttoconn,nconn);
+		printf("lefttoconn:%d nconn:%d\n",nlefttoconn,nconn);
 		current = 0;
 		while (nconn < MAXFILES && nlefttoconn > 0) {
 			for (i = current ; i < MAXFILES; i++)
@@ -94,6 +94,7 @@ int main(int argc, char **argv)
 			file[i].f_flags = F_CONNECTING;
 			setFileNameAndHost(listNode->value,file[i].f_name,file[i].f_host);
 			listDelNodeHead(queue);
+			//printList(queue);
 			pthread_create(&tid, NULL, &do_get_read, &file[i]);
 			file[i].f_tid = tid;
 			nconn++;
@@ -121,6 +122,7 @@ int main(int argc, char **argv)
 			}
 		}
 		pthread_mutex_unlock(&ndone_mutex);
+		nlefttoconn = queue->len;
 	}
 
 	listRelease(queue);
@@ -137,6 +139,7 @@ void *do_get_read(void *vptr)
 
 	fptr = (struct file *) vptr;
 
+	printf("connect for name:%s host:%s\n",fptr->f_name,fptr->f_host);
 	fd = tcpConnect(fptr->f_host, SERV);
 	fptr->f_fd = fd;
 	printf("do_get_read for name:%s host:%s, fd %d, thread %d\n",
@@ -147,7 +150,6 @@ void *do_get_read(void *vptr)
 	rio_readinitb(&rio,fd);
 	while((n = rio_readlineb(&rio,line,sizeof(line))) > 1)
 	{
-		printf("read %d bytes from name:%s host:%s\n", n, fptr->f_name,fptr->f_host);
 		if (strcmp(line, END_OF_HTML) == 0)
 		{
 			break;
@@ -182,9 +184,11 @@ void home_page(char *host, char *fname)
 {
 	int		fd, n;
 	char	line[MAXLINE];
+	redisReply *reply;
 	rio_t rio;
 
 	fd = tcpConnect(host, SERV);	/* blocking connect() */
+	reply = redisCommand(context,"sadd %s %s",setName,"www.8684.cn/");
 
 	n = snprintf(line, sizeof(line), GET_CMD, fname,host);
 	rio_writen(fd, line, n);
