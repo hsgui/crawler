@@ -50,11 +50,10 @@ int substr(char *des, const char*str, unsigned start, unsigned end)
 {
 	unsigned n;
 	unsigned i=start;
-	char exam[100];
+	char exam[1000];
 
 	strncpy(exam,str+start,end-start);
 	exam[end-start]=0;
-	printf("exam: %s\n",exam);
 	
 	if ((str[start]=='"' && str[end]=='"') )
 	{
@@ -67,6 +66,7 @@ int substr(char *des, const char*str, unsigned start, unsigned end)
 	n = end - start;
 	strncpy(des, str+start, n);
 	des[n] = 0;
+	printf("match content:%s,and the sub url is:%s\n",exam,des);
 	return 0;
 }
 
@@ -97,7 +97,6 @@ int parseUrl(char* content, char* host)
 	while (offset < contentlen && (rc = pcre_exec(re,0,content,contentlen,offset,0,ovector,sizeof(ovector))) == 2)
 	{
 		substr(url,content,ovector[2],ovector[3]);	//get the url
-		//printf("one may be url:%s\n",url);
 		urllen = strlen(url); //because url is just the only var,so malloc new
 		if (isContainHost(url) == 0)
 		{
@@ -118,16 +117,15 @@ int parseUrl(char* content, char* host)
 			reply = redisCommand(context,"sismember %s %s",setName,temp);
 			if (reply->type == REDIS_REPLY_INTEGER && reply->integer == 0)
 			{
-				printf("add new url:%s into the set\n",temp);
 				listAddNodeTail(queue, temp);	//add to the tail,always.lock
-				//printList(queue);
 				freeReplyObject(reply);
 				reply = redisCommand(context,"sadd %s %s",setName,temp);
 				freeReplyObject(reply);
+				printf("add new url:%s into the set,queue size:%d\n",temp,queue->len);
 			}
 			else if (reply->type == REDIS_REPLY_INTEGER && reply->integer == 1)
 			{
-				printf("the url:%s exits in the set\n",temp);
+				printf("the url:%s exits in the set,queue size:%d\n",temp,queue->len);
 				free(temp);
 				freeReplyObject(reply);
 			}
@@ -142,6 +140,7 @@ int parseUrl(char* content, char* host)
 		}
 		else
 		{
+			printf("the url:%s is not the 8684 domain\n",temp);
 			free(temp);				//is not the domain, free the array;
 		}
 		offset = ovector[3];

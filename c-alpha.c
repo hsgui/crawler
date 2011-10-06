@@ -41,9 +41,22 @@ int main(int argc, char **argv)
 	exit(0);
 }
 
+void print_pthread(pthread_t pt)
+{
+	size_t i;
+	unsigned char *ptc = (unsigned char*)(void*)(&pt);
+	printf("0x");
+	for (i = 0; i< sizeof(pt); i++)
+	{
+		printf("%02x",(unsigned)(ptc[i]));
+	}
+	printf("\n");
+}
+
 void *thread_work(void *ptr)
 {
 	pthread_detach(pthread_self());
+	pthread_t pid = pthread_self();
 	int fd=-1, n,length;
 	char line[MAXLINE];
 	char current_host[HOST_LENGTH];
@@ -60,6 +73,8 @@ void *thread_work(void *ptr)
 		pthread_mutex_lock(&queue_mutex);
 		while (queue->len == 0)
 			pthread_cond_wait(&queue_cond,&queue_mutex);
+		printf("fetch a url:%s to crawl,queue size:%d, thread id:",queue->head->value,queue->len);
+		print_pthread(pid);
 		length = strlen(queue->head->value);
 		strncpy(current_url,queue->head->value,length);
 		current_url[length]=0;
@@ -75,14 +90,17 @@ void *thread_work(void *ptr)
 			length = strlen(thread_file.f_host);
 			strncpy(current_host,thread_file.f_host,length);
 			current_host[length]=0;
-			printf("open a new connect for host: %s\n",current_host);
 		}
 		write_get_cmd(&thread_file);
 		rio_readinitb(&rio, fd);
+		length = 0;
 		while ( (n = rio_readlineb(&rio,line,sizeof(line))) > 1)
 		{
+			length++;
 			if (strcmp(line, END_OF_HTML) == 0)
 			{
+				printf("fetch a url:%s is over,total lines:%d, thread_id:",current_url,length);
+				print_pthread(pid);
 				break;
 			}
 			parseUrl(line,thread_file.f_host);
@@ -90,43 +108,6 @@ void *thread_work(void *ptr)
 	}
 }
 
-void *do_get_read(void *vptr)
-{
-	int					fd, n;
-	char				line[MAXLINE];
-	struct file			*fptr;
-	rio_t rio;
-
-	fptr = (struct file *) vptr;
-
-	printf("connect for name:%s host:%s\n",fptr->f_name,fptr->f_host);
-	fd = tcpConnect(fptr->f_host, SERV);
-	fptr->f_fd = fd;
-	printf("do_get_read for name:%s host:%s, fd %d, thread %d\n",
-			fptr->f_name,fptr->f_host, fd, fptr->f_tid);
-
-	write_get_cmd(fptr);	/* write() the GET command */
-
-	rio_readinitb(&rio,fd);
-	while((n = rio_readlineb(&rio,line,sizeof(line))) > 1)
-	{
-		if (strcmp(line, END_OF_HTML) == 0)
-		{
-			break;
-		}
-		parseUrl(line,fptr->f_host);
-	}
-	printf("end-of-file on name:%s host:%s\n", fptr->f_name,fptr->f_host);
-	close(fd);
-	fptr->f_flags = F_DONE;		/* clears F_READING */
-
-	pthread_mutex_lock(&ndone_mutex);
-	ndone++;
-	pthread_cond_signal(&ndone_cond);
-	pthread_mutex_unlock(&ndone_mutex);
-
-	return(fptr);		/* terminate thread */
-}
 
 void write_get_cmd(struct file *fptr)
 {
@@ -209,4 +190,42 @@ static void disconnectRedis(redisContext *c) {
 
     /* Free the context as well. */
     redisFree(c);
+}
+
+void *do_get_read(void *vptr)
+{
+	int					fd, n;
+	char				line[MAXLINE];
+	struct file			*fptr;
+	rio_t rio;
+
+	fptr = (struct file *) vptr;
+
+	printf("connect for name:%s host:%s\n",fptr->f_name,fptr->f_host);
+	fd = tcpConnect(fptr->f_host, SERV);
+	fptr->f_fd = fd;
+	printf("do_get_read for name:%s host:%s, fd %d, thread %d\n",
+			fptr->f_name,fptr->f_host, fd, fptr->f_tid);
+
+	write_get_cmd(fptr);	/* write() the GET command */
+
+	rio_readinitb(&rio,fd);
+	while((n = rio_readlineb(&rio,line,sizeof(line))) > 1)
+	{
+		if (strcmp(line, END_OF_HTML) == 0)
+		{
+			break;
+		}
+		parseUrl(line,fptr->f_host);
+	}
+	printf("end-of-file on name:%s host:%s\n", fptr->f_name,fptr->f_host);
+	close(fd);
+	fptr->f_flags = F_DONE;		/* clears F_READING */
+
+	pthread_mutex_lock(&ndone_mutex);
+	ndone++;
+	pthread_cond_signal(&ndone_cond);
+	pthread_mutex_unlock(&ndone_mutex);
+
+	return(fptr);		/* terminate thread */
 }
