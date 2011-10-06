@@ -50,6 +50,7 @@ int nconn, nfiles, nlefttoconn, nlefttoread;
 int ndone;
 static pthread_mutex_t ndone_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ndone_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
 
 //int tcpConnect(const char*, const char*); 
 //void *do_get_read(void*);

@@ -9,51 +9,12 @@ int port=6379;
 void *do_get_read(void*);
 void home_page(char *, char*);
 void write_get_cmd(struct file *);
+void *thread_work(void*);
 
-static struct redisContext *select_database(redisContext *c) {
-    redisReply *reply;
+static struct redisContext *select_database(redisContext *c);
+static redisContext *connectRedis(char* host, int port);
+static void disconnectRedis(redisContext *c);
 
-    reply = redisCommand(c,"SELECT 9");
-    freeReplyObject(reply);
-
-    reply = redisCommand(c,"DBSIZE");
-	if (reply == NULL)
-		printf("reply is null\n");
-    if (reply->type == REDIS_REPLY_INTEGER && reply->integer == 0) {
-        /* Awesome, DB 9 is empty and we can continue. */
-        freeReplyObject(reply);
-    } else {
-        printf("Database #9 is not empty, test can not continue\n");
-        exit(1);
-    }
-
-    return c;
-}
-
-static redisContext *connectRedis(char* host, int port) {
-    redisContext *c = NULL;
-
-    c = redisConnect(host,port);
-
-    if (c->err) {
-        printf("Connection error: %s\n", c->errstr);
-        exit(1);
-    }
-
-    return select_database(c);
-}
-static void disconnectRedis(redisContext *c) {
-    redisReply *reply;
-
-    /* Make sure we're on DB 9. */
-    reply = redisCommand(c,"SELECT 9");
-    freeReplyObject(reply);
-    //reply = redisCommand(c,"FLUSHDB"); //flushdb myself
-    //freeReplyObject(reply);
-
-    /* Free the context as well. */
-    redisFree(c);
-}
 
 int main(int argc, char **argv)
 {
@@ -63,71 +24,70 @@ int main(int argc, char **argv)
 	int current;
 	listNode *listNode;
 
-	for (i = 0; i < MAXFILES; i++) {
-		file[i].f_flags = 0;
-	}
 	context = connectRedis(localhost,port);
 	queue = listCreate();
 	home_page(HOST, "/");
 
 	nlefttoread = nlefttoconn = queue->len;
 	nconn = 0;
-	
-	while (nlefttoconn > 0 || nconn > 0) {
-		printf("lefttoconn:%d nconn:%d\n",nlefttoconn,nconn);
-		current = 0;
-		while (nconn < MAXFILES && nlefttoconn > 0) {
-			for (i = current ; i < MAXFILES; i++)
-				if (file[i].f_flags == 0)
-				{
-					current = i;
-					break;
-				}
-
-			pthread_mutex_lock(&queue_mutex);
-			listNode = queue->head;
-			if (listNode == NULL)
-			{
-				printf("have some but no!\n");
-				exit(1);
-			}
-			file[i].f_flags = F_CONNECTING;
-			setFileNameAndHost(listNode->value,file[i].f_name,file[i].f_host);
-			listDelNodeHead(queue);
-			//printList(queue);
-			pthread_create(&tid, NULL, &do_get_read, &file[i]);
-			file[i].f_tid = tid;
-			nconn++;
-			nlefttoconn = queue->len;
-			pthread_mutex_unlock(&queue_mutex);
-		}
-
-		pthread_mutex_lock(&ndone_mutex);
-		while (ndone == 0)
-			pthread_cond_wait(&ndone_cond, &ndone_mutex);
-
-		for (i = 0; i < MAXFILES; i++) {
-			if (file[i].f_flags & F_DONE) {
-				pthread_join(file[i].f_tid, (void **) &fptr);
-
-				if (&file[i] != fptr)
-				{
-					printf("file[i]!=ptr\n");
-					exit(1);
-				}
-				fptr->f_flags = 0;	/* clears F_DONE */
-				ndone--;
-				nconn--;
-				printf("thread %d for name:%s host:%s done\n", fptr->f_tid, fptr->f_name,fptr->f_host);
-			}
-		}
-		pthread_mutex_unlock(&ndone_mutex);
-		nlefttoconn = queue->len;
+	for(i = 0; i< MAXFILES; i++)
+	{
+		pthread_create(&tid,NULL,thread_work,NULL);
+		pthread_join(tid,NULL);
 	}
 
 	listRelease(queue);
 	disconnectRedis(context);
 	exit(0);
+}
+
+void *thread_work(void *ptr)
+{
+	pthread_detach(pthread_self());
+	int fd=-1, n,length;
+	char line[MAXLINE];
+	char current_host[HOST_LENGTH];
+	char current_url[URL_LENGTH];
+
+	struct file thread_file;
+	rio_t rio;
+
+	current_host[0]=0;
+	current_url[0]=0;
+
+	while (1)
+	{
+		pthread_mutex_lock(&queue_mutex);
+		while (queue->len == 0)
+			pthread_cond_wait(&queue_cond,&queue_mutex);
+		length = strlen(queue->head->value);
+		strncpy(current_url,queue->head->value,length);
+		current_url[length]=0;
+		listDelNodeHead(queue);
+		pthread_mutex_unlock(&queue_mutex);
+
+		setFileNameAndHost(current_url,thread_file.f_name,thread_file.f_host);
+		if (strcmp(current_host,thread_file.f_host) != 0)
+		{
+			close(fd);
+			fd = tcpConnect(thread_file.f_host, SERV);
+			thread_file.f_fd = fd;
+			length = strlen(thread_file.f_host);
+			strncpy(current_host,thread_file.f_host,length);
+			current_host[length]=0;
+			printf("open a new connect for host: %s\n",current_host);
+		}
+		write_get_cmd(&thread_file);
+		rio_readinitb(&rio, fd);
+		while ( (n = rio_readlineb(&rio,line,sizeof(line))) > 1)
+		{
+			if (strcmp(line, END_OF_HTML) == 0)
+			{
+				break;
+			}
+			parseUrl(line,thread_file.f_host);
+		}
+	}
 }
 
 void *do_get_read(void *vptr)
@@ -204,4 +164,49 @@ void home_page(char *host, char *fname)
 	}
 	printf("end-of-file on home page\n");
 	close(fd);
+}
+
+static struct redisContext *select_database(redisContext *c) {
+    redisReply *reply;
+
+    reply = redisCommand(c,"SELECT 9");
+    freeReplyObject(reply);
+
+    reply = redisCommand(c,"DBSIZE");
+	if (reply == NULL)
+		printf("reply is null\n");
+    if (reply->type == REDIS_REPLY_INTEGER && reply->integer == 0) {
+        /* Awesome, DB 9 is empty and we can continue. */
+        freeReplyObject(reply);
+    } else {
+        printf("Database #9 is not empty, test can not continue\n");
+        exit(1);
+    }
+
+    return c;
+}
+
+static redisContext *connectRedis(char* host, int port) {
+    redisContext *c = NULL;
+
+    c = redisConnect(host,port);
+
+    if (c->err) {
+        printf("Connection error: %s\n", c->errstr);
+        exit(1);
+    }
+
+    return select_database(c);
+}
+static void disconnectRedis(redisContext *c) {
+    redisReply *reply;
+
+    /* Make sure we're on DB 9. */
+    reply = redisCommand(c,"SELECT 9");
+    freeReplyObject(reply);
+    //reply = redisCommand(c,"FLUSHDB"); //flushdb myself
+    //freeReplyObject(reply);
+
+    /* Free the context as well. */
+    redisFree(c);
 }
