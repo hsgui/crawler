@@ -2,11 +2,11 @@
 #include"queue.h"
 #include"parse.h"
 #include"rio.h"
+#include"tcpConnect.h"
 
 char localhost[]="127.0.0.1";
 int port=6379;
 
-void *do_get_read(void*);
 void home_page(char *, char*);
 void write_get_cmd(struct file *);
 void *thread_work(void*);
@@ -15,25 +15,26 @@ static struct redisContext *select_database(redisContext *c);
 static redisContext *connectRedis(char* host, int port);
 static void disconnectRedis(redisContext *c);
 
-
 int main(int argc, char **argv)
 {
-	int			i, maxnconn;
-	pthread_t	tid;
-	struct file	*fptr;
-	int current;
-	listNode *listNode;
+	int			i;
+
+	pthread_t pids[MAXFILES];
+	char logStr[LOG_LENGTH];
 
 	context = connectRedis(localhost,port);
 	queue = listCreate();
 	home_page(HOST, "/");
 
-	nlefttoread = nlefttoconn = queue->len;
-	nconn = 0;
 	for(i = 0; i< MAXFILES; i++)
 	{
-		pthread_create(&tid,NULL,thread_work,NULL);
-		pthread_join(tid,NULL);
+		pthread_create(&pids[i],NULL,thread_work,NULL);
+	}
+	for (i=0; i< MAXFILES; i++)
+	{
+		pthread_join(pids[i],NULL);
+		snprintf(logStr,sizeof(logStr),"the thread is over");
+		logger(logStr);
 	}
 
 	listRelease(queue);
@@ -41,26 +42,14 @@ int main(int argc, char **argv)
 	exit(0);
 }
 
-void print_pthread(pthread_t pt)
-{
-	size_t i;
-	unsigned char *ptc = (unsigned char*)(void*)(&pt);
-	printf("0x");
-	for (i = 0; i< sizeof(pt); i++)
-	{
-		printf("%02x",(unsigned)(ptc[i]));
-	}
-	printf("\n");
-}
-
 void *thread_work(void *ptr)
 {
-	pthread_detach(pthread_self());
 	pthread_t pid = pthread_self();
 	int fd=-1, n,length;
 	char line[MAXLINE];
 	char current_host[HOST_LENGTH];
 	char current_url[URL_LENGTH];
+	char logStr[LOG_LENGTH];
 
 	struct file thread_file;
 	rio_t rio;
@@ -68,13 +57,18 @@ void *thread_work(void *ptr)
 	current_host[0]=0;
 	current_url[0]=0;
 
+	snprintf(logStr,sizeof(logStr),"start the thread");
+	logger(logStr);
+
 	while (1)
 	{
 		pthread_mutex_lock(&queue_mutex);
-		while (queue->len == 0)
+		while (queue->len == 0 || queue->head == NULL)
 			pthread_cond_wait(&queue_cond,&queue_mutex);
-		printf("fetch a url:%s to crawl,queue size:%d, thread id:",queue->head->value,queue->len);
-		print_pthread(pid);
+
+		snprintf(logStr,sizeof(logStr),"fetch a url:%s to crawl, queue size:%d",queue->head->value,queue->len);
+		logger(logStr);
+
 		length = strlen(queue->head->value);
 		strncpy(current_url,queue->head->value,length);
 		current_url[length]=0;
@@ -82,30 +76,36 @@ void *thread_work(void *ptr)
 		pthread_mutex_unlock(&queue_mutex);
 
 		setFileNameAndHost(current_url,thread_file.f_name,thread_file.f_host);
-		if (strcmp(current_host,thread_file.f_host) != 0)
+		fd = tcpConnect(thread_file.f_host, SERV);
+		if (fd == -1)
 		{
-			close(fd);
-			fd = tcpConnect(thread_file.f_host, SERV);
-			thread_file.f_fd = fd;
-			length = strlen(thread_file.f_host);
-			strncpy(current_host,thread_file.f_host,length);
-			current_host[length]=0;
+			continue;
 		}
+		thread_file.f_fd = fd;
+
 		write_get_cmd(&thread_file);
 		rio_readinitb(&rio, fd);
 		length = 0;
 		while ( (n = rio_readlineb(&rio,line,sizeof(line))) > 1)
 		{
+			if (length == 0)
+			{
+				snprintf(logStr,sizeof(logStr),"first reading data from url:%s",current_url);
+				logger(logStr);
+			}
 			length++;
 			if (strcmp(line, END_OF_HTML) == 0)
 			{
-				printf("fetch a url:%s is over,total lines:%d, thread_id:",current_url,length);
-				print_pthread(pid);
 				break;
 			}
 			parseUrl(line,thread_file.f_host);
 		}
+		snprintf(logStr,sizeof(logStr),"crawl url:%s overs, total lines:%d",current_url,length);
+		logger(logStr);
+
+		close(fd);
 	}
+	pthread_exit(NULL);
 }
 
 
@@ -113,10 +113,13 @@ void write_get_cmd(struct file *fptr)
 {
 	int		n;
 	char	line[MAXLINE];
+	char logStr[LOG_LENGTH];
 
 	n = snprintf(line, sizeof(line), GET_CMD, fptr->f_name, fptr->f_host);
 	rio_writen(fptr->f_fd, line, n);
-	printf("wrote %d bytes for name:%s host:%s\n", n, fptr->f_name,fptr->f_host);
+
+	snprintf(logStr,sizeof(logStr),"writes for host:%s, name:%s",fptr->f_name,fptr->f_host);
+	logger(logStr);
 
 	fptr->f_flags = F_READING;			/* clears F_CONNECTING */
 }
@@ -190,42 +193,4 @@ static void disconnectRedis(redisContext *c) {
 
     /* Free the context as well. */
     redisFree(c);
-}
-
-void *do_get_read(void *vptr)
-{
-	int					fd, n;
-	char				line[MAXLINE];
-	struct file			*fptr;
-	rio_t rio;
-
-	fptr = (struct file *) vptr;
-
-	printf("connect for name:%s host:%s\n",fptr->f_name,fptr->f_host);
-	fd = tcpConnect(fptr->f_host, SERV);
-	fptr->f_fd = fd;
-	printf("do_get_read for name:%s host:%s, fd %d, thread %d\n",
-			fptr->f_name,fptr->f_host, fd, fptr->f_tid);
-
-	write_get_cmd(fptr);	/* write() the GET command */
-
-	rio_readinitb(&rio,fd);
-	while((n = rio_readlineb(&rio,line,sizeof(line))) > 1)
-	{
-		if (strcmp(line, END_OF_HTML) == 0)
-		{
-			break;
-		}
-		parseUrl(line,fptr->f_host);
-	}
-	printf("end-of-file on name:%s host:%s\n", fptr->f_name,fptr->f_host);
-	close(fd);
-	fptr->f_flags = F_DONE;		/* clears F_READING */
-
-	pthread_mutex_lock(&ndone_mutex);
-	ndone++;
-	pthread_cond_signal(&ndone_cond);
-	pthread_mutex_unlock(&ndone_mutex);
-
-	return(fptr);		/* terminate thread */
 }

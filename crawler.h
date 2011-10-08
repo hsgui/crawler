@@ -15,6 +15,7 @@
 #include<string.h>
 #include<pthread.h>
 #include<pcre.h>
+#include<time.h>
 
 #include"hiredis.h"
 
@@ -24,10 +25,11 @@
 #define END_OF_HTML "</html>\r\n"
 
 #define MAXLINE 8192
-#define MAXFILES 128 
+#define MAXFILES 128
 #define SERV "80"
 #define URL_LENGTH 1024
-#define HOST_LENGTH 32
+#define HOST_LENGTH 128
+#define LOG_LENGTH 1024
 
 static struct redisContext *context;
 static char setName[]="url";
@@ -38,22 +40,23 @@ struct file{
 	int f_fd;
 	int f_flags;
 	pthread_t f_tid;
-}file[MAXFILES];
+};
 
 #define F_CONNECTING 1
 #define F_READING 2
 #define F_DONE 4
 #define F_JOINED 8
 
-int nconn, nfiles, nlefttoconn, nlefttoread;
-
-int ndone;
-static pthread_mutex_t ndone_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t ndone_cond = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-//int tcpConnect(const char*, const char*); 
-//void *do_get_read(void*);
-//void write_get_cmd(struct file *);
+void logger(char *logStr)
+{
+	time_t now;
+	struct tm *ptm;
+	time(&now);
+	ptm = localtime(&now);
+	printf("%d:%d:%d: thread id:%d: %s\n",ptm->tm_hour,ptm->tm_min,ptm->tm_sec,pthread_self(),logStr);
+}
 
 #endif

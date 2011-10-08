@@ -18,8 +18,6 @@ typedef struct list{
 
 static list *queue;
 
-pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 #define listLength(l) ((l)->len)
 #define listFirst(l) ((l)->head)
 #define listLast(l) ((l)->tail)

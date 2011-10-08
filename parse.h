@@ -66,7 +66,7 @@ int substr(char *des, const char*str, unsigned start, unsigned end)
 	n = end - start;
 	strncpy(des, str+start, n);
 	des[n] = 0;
-	printf("match content:%s,and the sub url is:%s\n",exam,des);
+	//printf("match content:%s,and the sub url is:%s\n",exam,des);
 	return 0;
 }
 
@@ -84,6 +84,8 @@ int parseUrl(char* content, char* host)
 	size_t urllen;
 	unsigned int contentlen;
 	int hostlen = strlen(host);
+
+	char logStr[LOG_LENGTH];
 
 	re = pcre_compile(pattern, 0,&error, &erroffset,NULL);
 	if (re == NULL)
@@ -121,11 +123,13 @@ int parseUrl(char* content, char* host)
 				freeReplyObject(reply);
 				reply = redisCommand(context,"sadd %s %s",setName,temp);
 				freeReplyObject(reply);
-				printf("add new url:%s into the set,queue size:%d\n",temp,queue->len);
+				pthread_cond_signal(&queue_cond);
+				snprintf(logStr,sizeof(logStr),"add new url:%s, queue size:%d",temp,queue->len);
+				logger(logStr);
 			}
 			else if (reply->type == REDIS_REPLY_INTEGER && reply->integer == 1)
 			{
-				printf("the url:%s exits in the set,queue size:%d\n",temp,queue->len);
+				//printf("the url:%s exits in the set,queue size:%d\n",temp,queue->len);
 				free(temp);
 				freeReplyObject(reply);
 			}
@@ -135,12 +139,11 @@ int parseUrl(char* content, char* host)
 				freeReplyObject(reply);
 				printf("some error occurs!\n");
 			}
-
 			pthread_mutex_unlock(&queue_mutex);
 		}
 		else
 		{
-			printf("the url:%s is not the 8684 domain\n",temp);
+			//printf("the url:%s is not the 8684 domain\n",temp);
 			free(temp);				//is not the domain, free the array;
 		}
 		offset = ovector[3];
