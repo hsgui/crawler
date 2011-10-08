@@ -1,10 +1,10 @@
-/* include tcp_connect */
 #include "crawler.h"
 
 int tcpConnect(const char *host, const char *serv)
 {
 	int				sockfd, n;
 	struct addrinfo	hints, *res, *ressave;
+	char logStr[LOG_LENGTH];
 
 	bzero(&hints, sizeof(struct addrinfo));
 	hints.ai_family = AF_UNSPEC;
@@ -12,9 +12,10 @@ int tcpConnect(const char *host, const char *serv)
 
 	if ( (n = getaddrinfo(host, serv, &hints, &res)) != 0)
 	{
-		printf("tcp_connect error for %s, %s: %s\n",
+		snprintf(logStr,sizeof(logStr),"tcp_connect error getaddrinfo for %s, %s: %s",
 				 host, serv, gai_strerror(n));
-		exit(1);
+		logger(logStr);
+		return -1;
 	}
 	ressave = res;
 
@@ -31,12 +32,14 @@ int tcpConnect(const char *host, const char *serv)
 
 	if (res == NULL)	/* errno set from final connect() */
 	{
-		printf("tcp_connect error for %s, %s\n", host, serv);
-		exit(1);
+		snprintf(logStr,sizeof(logStr),"tcp_connect error get socket for %s, %s", host, serv);
+		logger(logStr);
+		return -1;
 	}
 
 	freeaddrinfo(ressave);
-	printf("tcp connect success for %s, %s\n",host,serv);
+	snprintf(logStr,sizeof(logStr),"tcp connect success for %s, %s",host,serv);
+	logger(logStr);
 
 	return(sockfd);
 }
